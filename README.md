@@ -15,9 +15,10 @@ if you want other rations, you can edit params.
     Fine tune mode, python finetune.py
     
    results:
-   thsi is my prune models and map:
+   thsi is my prune models and map in voc:
    https://github.com/panchengl/yolov3_prune/orignal_results.png
    
+   my trained voc data results:
    orignal model map is 0.57, input size is 416x416, inference time is 23ms in 1080Ti, model size is 240M。
    after first prune, 
    map is 0.54, input size is 416x416, inference time is 20ms in 1080Ti, model size is 210M
