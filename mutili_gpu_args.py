@@ -5,7 +5,7 @@ from __future__ import division, print_function
 
 from utils.misc_utils import parse_anchors, read_class_names
 import math
-root = "/home/pcl/work/YOLOv3_TensorFlow"
+root = "/home/pcl/tf_work/my_github/yolov3_prune"
 ### Some paths
 # train_file = root + '/data/my_data/2007_train_r.txt'  # The path of the training txt file.
 train_file = root + '/data/my_data/train.txt'  # The path of the training txt file.

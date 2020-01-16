@@ -8,7 +8,7 @@ from collections import Counter
 
 from utils.nms_utils import cpu_nms, gpu_nms
 from utils.data_utils import parse_line
-
+import  tensorflow as tf
 
 def calc_iou(pred_boxes, true_boxes):
     '''
@@ -260,9 +260,35 @@ def get_preds_gpu(sess, gpu_nms_op, pred_boxes_flag, pred_scores_flag, image_ids
 
     return pred_content
 
+def get_preds_gpu_asff(sess, gpu_nms_op, pred_boxes_flag, pred_scores_flag, image_ids, y_pred):
+    '''
+    Given the y_pred of an input image, get the predicted bbox and label info.
+    return:
+        pred_content: 2d list.
+    '''
+    image_id = image_ids[0]
+
+    # keep the first dimension 1
+    pred_boxes = y_pred[0][0:1]
+    pred_confs = y_pred[1][0:1]
+    pred_probs = y_pred[2][0:1]
+    pred_sigma = y_pred[3][0:1]
+
+    boxes, scores, labels = sess.run(gpu_nms_op,
+                                     feed_dict={pred_boxes_flag: pred_boxes,
+                                                pred_scores_flag: pred_confs * pred_probs*(1 - tf.reduce_mean(pred_sigma, axis=-1, keep_dims=True)) })
+
+    pred_content = []
+    for i in range(len(labels)):
+        x_min, y_min, x_max, y_max = boxes[i]
+        score = scores[i]
+        label = labels[i]
+        pred_content.append([image_id, x_min, y_min, x_max, y_max, score, label])
+
+    return pred_content
 
 gt_dict = {}  # key: img_id, value: gt object list
-def parse_gt_rec(gt_filename, resize_img_size):
+def parse_gt_rec(gt_filename, target_img_size, letterbox_resize=True):
     '''
     parse and re-organize the gt info.
     return:
@@ -272,28 +298,41 @@ def parse_gt_rec(gt_filename, resize_img_size):
     global gt_dict
 
     if not gt_dict:
-        resize_w, resize_h = resize_img_size
+        new_width, new_height = target_img_size
         with open(gt_filename, 'r') as f:
             for line in f:
-                img_id, pic_path, boxes, labels = parse_line(line)
-
-                ori_img_size = cv2.imread(pic_path).shape
-                ori_w, ori_h = ori_img_size[1], ori_img_size[0]
+                img_id, pic_path, boxes, labels, ori_width, ori_height = parse_line(line)
 
                 objects = []
                 for i in range(len(labels)):
                     x_min, y_min, x_max, y_max = boxes[i]
                     label = labels[i]
-                    objects.append([x_min * resize_w / ori_w,
-                                    y_min * resize_h / ori_h,
-                                    x_max * resize_w / ori_w,
-                                    y_max * resize_h / ori_h,
-                                    label])
+
+                    if letterbox_resize:
+                        resize_ratio = min(new_width / ori_width, new_height / ori_height)
+
+                        resize_w = int(resize_ratio * ori_width)
+                        resize_h = int(resize_ratio * ori_height)
+
+                        dw = int((new_width - resize_w) / 2)
+                        dh = int((new_height - resize_h) / 2)
+
+                        objects.append([x_min * resize_ratio + dw,
+                                        y_min * resize_ratio + dh,
+                                        x_max * resize_ratio + dw,
+                                        y_max * resize_ratio + dh,
+                                        label])
+                    else:
+                        objects.append([x_min * new_width / ori_width,
+                                        y_min * new_height / ori_height,
+                                        x_max * new_width / ori_width,
+                                        y_max * new_height / ori_height,
+                                        label])
                 gt_dict[img_id] = objects
     return gt_dict
 
 
-# The following two function are modified from FAIR's Detectron repo to calculate mAP:
+# The following two functions are modified from FAIR's Detectron repo to calculate mAP:
 # https://github.com/facebookresearch/Detectron/blob/master/detectron/datasets/voc_eval.py
 def voc_ap(rec, prec, use_07_metric=False):
     """Compute VOC AP given precision and recall. If use_07_metric is true, uses

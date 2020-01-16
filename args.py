@@ -7,13 +7,13 @@ from utils.misc_utils import parse_anchors, read_class_names
 import math
 
 ### Some paths
-train_file = './VOC_2007_train.txt'  # The path of the training txt file.
-val_file = './VOC_2007.txt'  # The path of the validation txt file.
-restore_path = './kmeans_checkpoint/kmeans_best_model_Epoch_15_step_44271.0_mAP_0.5412_loss_9.6003_lr_4.423679e-05'  # The path of the weights to restore.
+train_file = './data/my_data/train.txt'  # The path of the training txt file.
+val_file = './data/my_data/val.txt'  # The path of the validation txt file.
+restore_path = './data/darknet_weights/yolov3.ckpt'  # The path of the weights to restore.
 save_dir = './checkpoint/'  # The directory of the weights to save.
 log_dir = './data/logs/'  # The directory to store the tensorboard log files.
 progress_log_path = './data/progress.log'  # The path to record the training progress.
-anchor_path = './data/my_data/voc_anchors.txt'  # The path of the anchor txt file.
+anchor_path = './data/yolo_anchors.txt'  # The path of the anchor txt file.
 class_name_path = './data/my_data/voc.names'  # The path of the class names.
 
 ### Training releated numbers
@@ -32,9 +32,9 @@ num_threads = 10  # Number of threads for image processing used in tf.data pipel
 prefetech_buffer = 5  # Prefetech_buffer used in tf.data pipeline.
 
 ### Learning rate and optimizer
-optimizer_name = 'adam'  # Chosen from [sgd, momentum, adam, rmsprop]
+optimizer_name = 'momentum'  # Chosen from [sgd, momentum, adam, rmsprop]
 save_optimizer = True  # Whether to save the optimizer parameters into the checkpoint file.
-learning_rate_init = 5e-5
+learning_rate_init = 1e-4
 lr_type = 'exponential'  # Chosen from [fixed, exponential, cosine_decay, cosine_decay_restart, piecewise]
 lr_decay_epoch = 5  # Epochs after which learning rate decays. Int or float. Used when chosen `exponential` and `cosine_decay_restart` lr_type.
 lr_decay_factor = 0.96  # The learning rate decay factor. Used when chosen `exponential` lr_type.
@@ -44,13 +44,21 @@ pw_boundaries = [60, 80]  # epoch based boundaries
 pw_values = [learning_rate_init, 3e-5, 1e-4]
 
 ### Load and finetune
+### Load and finetune
 # Choose the parts you want to restore the weights. List form.
-# Set to None to restore the whole model.
-restore_part = ['yolov3/darknet53_body','yolov3/yolov3_head']
+# restore_include: None, restore_exclude: None  => restore the whole model
+# restore_include: None, restore_exclude: scope  => restore the whole model except `scope`
+# restore_include: scope1, restore_exclude: scope2  => if scope1 contains scope2, restore scope1 and not restore scope2 (scope1 - scope2)
+# choise 1: only restore the darknet body
+# restore_include = ['yolov3/darknet53_body']
+# restore_exclude = None
+# update_part = ["yolov3/yolov3_head"]
+# choise 2: restore all layers except the last 3 conv2d layers in 3 scale
+restore_include = None
+restore_exclude = ['yolov3/yolov3_head/Conv_14', 'yolov3/yolov3_head/Conv_6', 'yolov3/yolov3_head/Conv_22']
 # Choose the parts you want to finetune. List form.
-# Set to None to trainself._ the whole model.
-update_part = ['yolov3/darknet53_body','yolov3/yolov3_head']
-
+# Set to None to train the whole model.
+update_part = None
 ### other training strategies
 multi_scale_train = True  # Whether to apply multi-scale training strategy. Image size varies from [320, 320] to [640, 640] by default.
 use_label_smooth = True # Whether to use class label smoothing strategy.

@@ -79,6 +79,15 @@ def yolo_block(inputs, filters):
     return route, net
 
 
+def upsample_layer(inputs, out_shape):
+    new_height, new_width = out_shape[1], out_shape[2]
+    # NOTE: here height is the first
+    # TODO: Do we need to set `align_corners` as True?
+    # inputs = tf.image.resize_nearest_neighbor(inputs, (new_height, new_width), name='upsampled')
+    inputs = tf.image.resize_bilinear(inputs, size=[new_height, new_width],name='upsampled')
+    return inputs
+
+
 def yolo_block_pecentage(inputs, filters, pecentage, prune_cnt=1):
     import numpy as np
     true_filters_1 = filters
@@ -104,12 +113,3 @@ def yolo_block_pecentage(inputs, filters, pecentage, prune_cnt=1):
     net = conv2d(net,  true_filters_2, 3)
 
     return route, net
-
-def upsample_layer(inputs, out_shape):
-    new_height, new_width = out_shape[1], out_shape[2]
-    # NOTE: here height is the first
-    # TODO: Do we need to set `align_corners` as True?
-    inputs = tf.image.resize_nearest_neighbor(inputs, (new_height, new_width), name='upsampled')
-    return inputs
-
-
