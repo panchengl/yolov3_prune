@@ -1,0 +1,3 @@
+first: python sliming_scale_para_train.py
+second: python sliming_prun_model.py
+third: sliming_finetune_train,py
