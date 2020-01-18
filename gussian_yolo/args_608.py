@@ -11,17 +11,17 @@ root = "/home/pcl/tf_work/my_github/yolov3_prune"
 train_file = root + '/data/my_data/train.txt'  # The path of the training txt file.
 # val_file = root + '/data/my_data/2007_test_r.txt'  # The path of the validation txt file.
 val_file = root + '/data/my_data/val.txt'  # The path of the validation txt file.
-restore_path = root + '/data/darknet_weights/yolov3.ckpt'  # The path of the weights to restore.
+restore_path = root + '/data/weights_608/yolov3.ckpt'  # The path of the weights to restore.
 # restore_path = root + '/dianli_608/checkpoint/best_model_Epoch_6_step_19312_mAP_0.8222_loss_3.2074_lr_9.958527e-05'  # The path of the weights to restore.
-save_dir = root + '/gussian_yolo/checkpoint/'  # The directory of the weights to save.
+save_dir = root + '/gussian_yolo/checkpoint_608/'  # The directory of the weights to save.
 log_dir = root + '/gussian_yolo/data/logs/'  # The directory to store the tensorboard log files.
 progress_log_path = root + '/data/progress.log'  # The path to record the training progress.
 anchor_path = root + '/data/yolo_anchors.txt'  # The path of the anchor txt file.
 class_name_path = root + '/data/my_data/voc.names'  # The path of the class names.
 
 ### Training releated numbers
-batch_size = 14
-img_size = [416, 416]  # Images will be resized to `img_size` and fed to the network, size format: [width, height]
+batch_size = 6
+img_size = [608, 608]  # Images will be resized to `img_size` and fed to the network, size format: [width, height]
 letterbox_resize = False  # Whether to use the letterbox resize, i.e., keep the original aspect ratio in the resized image.
 total_epoches = 100
 train_evaluation_step = 100  # Evaluate on the training batch after some steps.

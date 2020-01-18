@@ -7,11 +7,11 @@ import numpy as np
 import logging
 from tqdm import trange
 import os
-os.environ['TF_AUTO_MIXED_PRECISION_GRAPH_REWRITE_IGNORE_PERFORMANCE'] = '1'
-os.environ['CUDA_VISIBLE_DEVICES']='1'
+# os.environ['TF_AUTO_MIXED_PRECISION_GRAPH_REWRITE_IGNORE_PERFORMANCE'] = '1'
+os.environ['CUDA_VISIBLE_DEVICES']='0'
 # import args
 # import misc.experiments_on_voc.args_voc as args
-import gussian_yolo.args as args
+import gussian_yolo.args_608 as args
 from utils.data_utils import get_batch_data
 from utils.misc_utils import shuffle_and_overwrite, make_summary, config_learning_rate, config_optimizer, AverageMeter
 from utils.eval_utils import evaluate_on_cpu, voc_eval, parse_gt_rec

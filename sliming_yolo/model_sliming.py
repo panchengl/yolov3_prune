@@ -688,3 +688,14 @@ class sliming_yolov3(object):
         iou = intersect_area / (pred_box_area + true_box_area - intersect_area + 1e-10)
 
         return iou
+
+    # def distillation_loss1(self, output_s, output_t, num_classes, batch_size):
+    #     batch_size = tf.cast(batch_size, tf.float32)
+    #     T = 3.0
+    #     Lambda_ST = 0.001
+    #     criterion_st = torch.nn.KLDivLoss(reduction='sum')
+    #     output_s = tf.concat([i.view(-1, num_classes + 5) for i in output_s])
+    #     output_t = torch.cat([i.view(-1, num_classes + 5) for i in output_t])
+    #     loss_st  = criterion_st(nn.functional.log_softmax(output_s/T, dim=1), nn.functional.softmax(output_t/T,dim=1))* (T*T) / batch_size
+    #     return loss_st * Lambda_ST
+
