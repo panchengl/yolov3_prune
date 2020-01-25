@@ -19,9 +19,9 @@ if you want other rations, you can edit params.
    https://github.com/panchengl/yolov3_prune/orignal_results.png
    
    my trained voc data results:
-   orignal model map is 0.57, input size is 416x416, inference time is 23ms in 1080Ti, model size is 240M。
+   orignal model map is 0.835 input size is 416x416, inference time is 23ms in 1080Ti, model size is 240M。
    after first prune, 
-   map is 0.54, input size is 416x416, inference time is 20ms in 1080Ti, model size is 210M
+   map is 0.82, input size is 416x416, inference time is 20ms in 1080Ti, model size is 210M
    
    
 I referred to many code：
