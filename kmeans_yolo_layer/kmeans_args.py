@@ -5,28 +5,27 @@ from __future__ import division, print_function
 
 from utils.misc_utils import parse_anchors, read_class_names
 import math
-root = "/home/pcl/tf_work/my_github/yolov3_prune"
+
 ### Some paths
-# train_file = root + '/data/my_data/2007_train_r.txt'  # The path of the training txt file.
-train_file = root + '/data/my_data/dianli_train_r.txt'  # The path of the training txt file.
-# val_file = root + '/data/my_data/2007_test_r.txt'  # The path of the validation txt file.
-val_file = root + '/data/my_data/dianli_test_r.txt'  # The path of the validation txt file.
-restore_path = root + '/data/weights_608/yolov3.ckpt'  # The path of the weights to restore.
-# restore_path = root + '/dianli_608/checkpoint/best_model_Epoch_6_step_19312_mAP_0.8222_loss_3.2074_lr_9.958527e-05'  # The path of the weights to restore.
-save_dir = root + '/gussian_yolo/checkpoint_608/'  # The directory of the weights to save.
-log_dir = root + '/gussian_yolo/data/logs/'  # The directory to store the tensorboard log files.
+root = '/home/pcl/tf_work/my_github/yolov3_prune/'
+train_file = root + '/data/my_data/train.txt'  # The path of the training txt file.
+val_file = root + '/data/my_data/val.txt'  # The path of the validation txt file.
+# restore_path = root + '/dinali_608/scale_gamma_checkpoint/best_model_Epoch_1_step_5517_mAP_0.6280_loss_4.9122_lr_1e-05'  # The path of the weights to restore.
+finetune_restore_path = root + '/kmeans_yolo_layer/kmeans_checkpoint/fourth_kmeans_prune_restore_model_all.ckpt'
+save_dir =root + '/kmeans_yolo_layer/kmeans_checkpoint/'  # The directory of the weights to save.
+log_dir = root  + '/data/logs/'  # The directory to store the tensorboard log files.
 progress_log_path = root + '/data/progress.log'  # The path to record the training progress.
 anchor_path = root + '/data/yolo_anchors.txt'  # The path of the anchor txt file.
-class_name_path = root + '/data/my_data/dianli.names'  # The path of the class names.
+class_name_path = root + '/data/my_data/voc.names'  # The path of the class names.
 
 ### Training releated numbers
 batch_size = 6
-img_size = [608, 608]  # Images will be resized to `img_size` and fed to the network, size format: [width, height]
+img_size = [416, 416]  # Images will be resized to `img_size` and fed to the network, size format: [width, height]
 letterbox_resize = False  # Whether to use the letterbox resize, i.e., keep the original aspect ratio in the resized image.
 total_epoches = 100
 train_evaluation_step = 100  # Evaluate on the training batch after some steps.
 val_evaluation_epoch = 1  # Evaluate on the whole validation dataset after some steps. Set to None to evaluate every epoch.
-save_epoch = 10  # Save the model after some epochs.
+save_epoch = 1  # Save the model after some epochs.
 batch_norm_decay = 0.99  # decay in bn ops
 weight_decay = 5e-4  # l2 weight decay
 global_step = 0  # used when resuming training
@@ -53,12 +52,11 @@ pw_values = [learning_rate_init, 3e-5, 1e-4]
 # restore_include: None, restore_exclude: scope  => restore the whole model except `scope`
 # restore_include: scope1, restore_exclude: scope2  => if scope1 contains scope2, restore scope1 and not restore scope2 (scope1 - scope2)
 # choise 1: only restore the darknet body
-# restore_include = ['yolov3/darknet53_body']
-# restore_exclude = None
-# update_part = ["yolov3/yolov3_head"]
+restore_include = ['yolov3/darknet53_body', 'yolov3/yolov3_head']
+restore_exclude = None
 # choise 2: restore all layers except the last 3 conv2d layers in 3 scale
-restore_include = None
-restore_exclude = ['yolov3/yolov3_head/Conv_14', 'yolov3/yolov3_head/Conv_6', 'yolov3/yolov3_head/Conv_22']
+# restore_include = None
+# restore_exclude = ['yolov3/yolov3_head/Conv_14', 'yolov3/yolov3_head/Conv_6', 'yolov3/yolov3_head/Conv_22']
 # Choose the parts you want to finetune. List form.
 # Set to None to train the whole model.
 update_part = None
@@ -68,7 +66,7 @@ multi_scale_train = True  # Whether to apply multi-scale training strategy. Imag
 use_label_smooth = True # Whether to use class label smoothing strategy.
 use_focal_loss = True  # Whether to apply focal loss on the conf loss.
 use_mix_up = True  # Whether to use mix up data augmentation strategy.
-use_warm_up = True  # whether to use warm up strategy to prevent from gradient exploding.
+use_warm_up = False  # whether to use warm up strategy to prevent from gradient exploding.
 warm_up_epoch = 3  # Warm up training epoches. Set to a larger value if gradient explodes.
 
 ### some constants in validation
@@ -82,7 +80,7 @@ use_voc_07_metric = False  # whether to use voc 2007 evaluation metric, i.e. the
 
 ### parse some params
 anchors = parse_anchors(anchor_path)
-classes = read_class_names(class_name_path)
+classes = read_class_names( class_name_path)
 class_num = len(classes)
 train_img_cnt = len(open(train_file, 'r').readlines())
 val_img_cnt = len(open(val_file, 'r').readlines())
@@ -90,6 +88,3 @@ train_batch_num = int(math.ceil(float(train_img_cnt) / batch_size))
 
 lr_decay_freq = int(train_batch_num * lr_decay_epoch)
 pw_boundaries = [float(i) * train_batch_num + global_step for i in pw_boundaries]
-
-
-NUM_GPU = 2

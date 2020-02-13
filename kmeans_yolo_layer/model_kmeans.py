@@ -5,11 +5,10 @@
 from __future__ import division, print_function
 
 import tensorflow as tf
-import numpy as np
 
 slim = tf.contrib.slim
 
-from utils.layer_utils import conv2d, darknet53_body, yolo_block, upsample_layer, yolo_block_pecentage
+from utils.layer_utils import conv2d, darknet53_body, yolo_block, upsample_layer
 
 
 def conv2d(inputs, filters, kernel_size, strides=1):
@@ -29,7 +28,7 @@ def conv2d(inputs, filters, kernel_size, strides=1):
     return inputs
 
 
-def parse_exclude_res_darknet53_body(inputs):
+def parse_exclude_res_darknet53_body(inputs, shortcut_list):
     def res_block(inputs, filters):
         shortcut = inputs
         net = conv2d(inputs, filters // 2, 1)
@@ -137,16 +136,66 @@ def parse_include_res_darknet53_body(inputs):
 
     return route_1, route_2, route_3
 
-def parse_include_res_darknet53_body_prune_factor(inputs, prune_factor, prune_cnt=1):
+def parse_include_res_darknet53_body_prune_factor(inputs, prune_factor):
     import numpy as np
-    def res_block(inputs, filters, prune_factor, prune_cnt):
-        true_filters_1 = filters
-        true_filters_2 = filters * 2
-        for i in range(prune_cnt):
-            true_filters_1 = np.floor(true_filters_1 * prune_factor)
-            # true_filters_2 = np.floor(true_filters_2 * prune_factor)
+    def res_block(inputs, filters, prune_factor):
         shortcut = inputs
-        net = conv2d(inputs, true_filters_1, 1)
+        net = conv2d(inputs, np.floor(filters * prune_factor), 1)
+        net = conv2d(net, np.floor(filters * 2 * prune_factor ), 3)
+
+        net = net + shortcut
+
+        return net
+
+    def darknet_last_res_block(inputs, filters):
+        shortcut = inputs
+        net = conv2d(inputs, filters, 1)
+        net = conv2d(net, filters *2, 3)
+        net = net + shortcut
+        return net
+
+    # first two conv2d layers
+    net = conv2d(inputs, np.floor(32 * prune_factor), 3, strides=1)
+    net = conv2d(net, np.floor(64 * prune_factor) , 3, strides=2)
+
+    # res_block * 1
+    net = res_block(net, 32, prune_factor)
+
+    net = conv2d(net, np.floor(128 * prune_factor), 3, strides=2)
+
+    # res_block * 2
+    for i in range(2):
+        net = res_block(net, 64, prune_factor)
+
+    net = conv2d(net, np.floor(256 * prune_factor), 3, strides=2)
+
+    # res_block * 8
+    for i in range(8):
+        net = res_block(net, 128, prune_factor)
+    # net = res_block(net, 128, prune_factor=1)
+    route_1 = net
+    net = conv2d(net, np.floor(512 * prune_factor), 3, strides=2)
+
+    # res_block * 8
+    for i in range(8):
+        net = res_block(net, 256, prune_factor)
+    # net = res_block(net, 256, prune_factor=1)
+    route_2 = net
+    net = conv2d(net, np.floor(1024 * prune_factor), 3, strides=2)
+
+    # res_block * 4
+    for i in range(4):
+        net = res_block(net, 512, prune_factor)
+    # net = darknet_last_res_block(net, 512)
+    # net = conv2d(net, 1024, 1)
+    route_3 = net
+
+    return route_1, route_2, route_3
+
+def darknet53_body_shortcut(inputs, shortcut_list):
+    def res_block(inputs, filters):
+        shortcut = inputs
+        net = conv2d(inputs, filters * 1, 1)
         net = conv2d(net, filters * 2, 3)
 
         net = net + shortcut
@@ -154,45 +203,47 @@ def parse_include_res_darknet53_body_prune_factor(inputs, prune_factor, prune_cn
         return net
 
     # first two conv2d layers
-    true_filters_conv0 = 32
-    for i in range(prune_cnt):
-        true_filters_conv0 = np.floor(true_filters_conv0 * prune_factor)
-    net = conv2d(inputs, true_filters_conv0, 3, strides=1)
-    net = conv2d(net, 64 , 3, strides=2)
+    net = conv2d(inputs, 32, 3, strides=1)
+    net = conv2d(net, 64, 3, strides=2)
 
     # res_block * 1
-    net = res_block(net, 32, prune_factor, prune_cnt=prune_cnt)
+    for i in range(shortcut_list[0]):
+        net = res_block(net, 32)
 
     net = conv2d(net, 128 , 3, strides=2)
 
     # res_block * 2
-    for i in range(2):
-        net = res_block(net, 64, prune_factor, prune_cnt=prune_cnt)
+    for i in range(shortcut_list[1]):
+        net = res_block(net, 64)
 
     net = conv2d(net, 256, 3, strides=2)
 
     # res_block * 8
-    for i in range(8):
-        net = res_block(net, 128, prune_factor, prune_cnt=prune_cnt)
+    for i in range(shortcut_list[2]):
+        net = res_block(net, 128)
+
     route_1 = net
-    net = conv2d(net, 512, 3, strides=2)
+    net = conv2d(net, 512 , 3, strides=2)
 
     # res_block * 8
-    for i in range(8):
-        net = res_block(net, 256, prune_factor, prune_cnt=prune_cnt)
+    for i in range(shortcut_list[3]):
+        net = res_block(net, 256)
+
     route_2 = net
-    net = conv2d(net, 1024 , 3, strides=2)
+    net = conv2d(net, 1024, 3, strides=2)
 
     # res_block * 4
-    for i in range(4):
-        net = res_block(net, 512, prune_factor, prune_cnt=prune_cnt)
+    for i in range(shortcut_list[4]):
+        net = res_block(net, 512)
+    # net = darknet_last_res_block(net, 512)
+    # net = conv2d(net, 1024, 1)
     route_3 = net
 
     return route_1, route_2, route_3
 
-class sliming_yolov3(object):
+class sparse_yolov3_shortcut(object):
 
-    def __init__(self, class_num, anchors, use_label_smooth=False, use_focal_loss=False, batch_norm_decay=0.999,
+    def __init__(self, class_num, anchors, shortcut_list, use_label_smooth=False, use_focal_loss=False, batch_norm_decay=0.999,
                  weight_decay=5e-4):
 
         # self.anchors = [[10, 13], [16, 30], [33, 23],
@@ -204,6 +255,7 @@ class sliming_yolov3(object):
         self.use_label_smooth = use_label_smooth
         self.use_focal_loss = use_focal_loss
         self.weight_decay = weight_decay
+        self.shortcut_list = shortcut_list
 
     def forward(self, inputs, is_training=False, reuse=False):
         # the input img_size, form: [height, weight]
@@ -226,7 +278,8 @@ class sliming_yolov3(object):
                                 activation_fn=lambda x: tf.nn.leaky_relu(x, alpha=0.1),
                                 weights_regularizer=slim.l2_regularizer(self.weight_decay)):
                 with tf.variable_scope('darknet53_body'):
-                    route_1, route_2, route_3 = parse_exclude_res_darknet53_body(inputs)
+                    # route_1, route_2, route_3 = parse_exclude_res_darknet53_body(inputs, self.shortcut_list)
+                    route_1, route_2, route_3 = darknet53_body_shortcut(inputs, self.shortcut_list)
 
                 with tf.variable_scope('yolov3_head'):
                     inter1, net = yolo_block(route_3, 512)
@@ -309,7 +362,7 @@ class sliming_yolov3(object):
 
             return feature_map_1, feature_map_2, feature_map_3
 
-    def forward_include_res_with_prune_factor(self, inputs, prune_factor, is_training=False, reuse=False, prune_cnt=1):
+    def forward_include_res_with_prune_factor(self, inputs, prune_factor, is_training=False, reuse=False):
         # the input img_size, form: [height, weight]
         # it will be used later
         self.img_size = tf.shape(inputs)[1:3]
@@ -330,10 +383,10 @@ class sliming_yolov3(object):
                                 activation_fn=lambda x: tf.nn.leaky_relu(x, alpha=0.1),
                                 weights_regularizer=slim.l2_regularizer(self.weight_decay)):
                 with tf.variable_scope('darknet53_body'):
-                    route_1, route_2, route_3 = parse_include_res_darknet53_body_prune_factor(inputs, prune_factor, prune_cnt)
+                    route_1, route_2, route_3 = parse_include_res_darknet53_body_prune_factor(inputs, prune_factor)
 
                 with tf.variable_scope('yolov3_head'):
-                    inter1, net = yolo_block_pecentage(route_3, 512, prune_factor, prune_cnt=prune_cnt)
+                    inter1, net = yolo_block(route_3, 512)
                     feature_map_1 = slim.conv2d(net, 3 * (5 + self.class_num), 1,
                                                 stride=1, normalizer_fn=None,
                                                 activation_fn=None, biases_initializer=tf.zeros_initializer())
@@ -343,7 +396,7 @@ class sliming_yolov3(object):
                     inter1 = upsample_layer(inter1, tf.shape(route_2))
                     concat1 = tf.concat([inter1, route_2], axis=3)
 
-                    inter2, net = yolo_block_pecentage(concat1, 256, prune_factor, prune_cnt=prune_cnt)
+                    inter2, net = yolo_block(concat1, 256)
                     feature_map_2 = slim.conv2d(net, 3 * (5 + self.class_num), 1,
                                                 stride=1, normalizer_fn=None,
                                                 activation_fn=None, biases_initializer=tf.zeros_initializer())
@@ -353,7 +406,7 @@ class sliming_yolov3(object):
                     inter2 = upsample_layer(inter2, tf.shape(route_1))
                     concat2 = tf.concat([inter2, route_1], axis=3)
 
-                    _, feature_map_3 = yolo_block_pecentage(concat2, 128, prune_factor, prune_cnt=prune_cnt)
+                    _, feature_map_3 = yolo_block(concat2, 128)
                     feature_map_3 = slim.conv2d(feature_map_3, 3 * (5 + self.class_num), 1,
                                                 stride=1, normalizer_fn=None,
                                                 activation_fn=None, biases_initializer=tf.zeros_initializer())
@@ -688,23 +741,3 @@ class sliming_yolov3(object):
         iou = intersect_area / (pred_box_area + true_box_area - intersect_area + 1e-10)
 
         return iou
-
-    # def distillation_loss1(self, output_s, output_t, num_classes, batch_size):
-    #     batch_size = tf.cast(batch_size, tf.float32)
-    #     T = 3.0
-    #     Lambda_ST = 0.001
-    #     criterion_st = torch.nn.KLDivLoss(reduction='sum')
-    #     output_s = tf.concat([i.view(-1, num_classes + 5) for i in output_s])
-    #     output_t = torch.cat([i.view(-1, num_classes + 5) for i in output_t])
-    #     loss_st  = criterion_st(nn.functional.log_softmax(output_s/T, dim=1), nn.functional.softmax(output_t/T,dim=1))* (T*T) / batch_size
-    #     return loss_st * Lambda_ST
-
-    def distillation_loss1(self, output_s, output_t, num_classes, batch_size):
-        batch_size = tf.cast(batch_size, tf.float32)
-        T = 3.0
-        Lambda_ST = 0.001
-        # criterion_st = torch.nn.KLDivLoss(reduction='sum')
-        output_s = tf.concat([i.view(-1, num_classes + 5) for i in output_s])
-        output_t = tf.concat([i.view(-1, num_classes + 5) for i in output_t])
-        loss_st  = (tf.nn.log_softmax(output_s/T, dim=1), tf.nn.softmax(output_t/T,dim=1))* (T*T) / batch_size
-        return loss_st * Lambda_ST
