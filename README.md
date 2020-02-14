@@ -1,3 +1,14 @@
+20200214 updates:
+    add structure prune--layer prune algorithm, compared with the channel pruning algorithm, the efficiency is not high. ---Reference Paper DeepCompression SongHan
+
+20200117 updates:
+    add gussian-yolov3, map 0.8378->0.8459 in voc dataset
+
+20200110 updates:
+    add soft-prune, but cannot use
+    add spp1, spp3 backbone
+
+
 # yolov3_prune
   In this project, you can end-to-end pruning models.It should be noted that my project is based on others projects,so,if you want prune yolov3 model, you can use the following steps:
   
