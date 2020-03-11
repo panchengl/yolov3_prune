@@ -10,14 +10,14 @@ import os
 # os.environ['TF_AUTO_MIXED_PRECISION_GRAPH_REWRITE_IGNORE_PERFORMANCE'] = '1'
 os.environ['CUDA_VISIBLE_DEVICES']='1'
 # import args
-import misc.experiments_on_voc.args_voc as args
+# import quant_yolo.args_quat as args
 
 from utils.data_utils import get_batch_data
 from utils.misc_utils import shuffle_and_overwrite, make_summary, config_learning_rate, config_optimizer, AverageMeter
 from utils.eval_utils import evaluate_on_cpu, evaluate_on_gpu, get_preds_gpu, voc_eval, parse_gt_rec
 from utils.nms_utils import gpu_nms
 
-from model import yolov3
+from quant_yolo.model import yolov3
 
 # setting loggers
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(message)s',

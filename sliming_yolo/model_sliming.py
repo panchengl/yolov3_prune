@@ -28,6 +28,59 @@ def conv2d(inputs, filters, kernel_size, strides=1):
                          padding=('SAME' if strides == 1 else 'VALID'))
     return inputs
 
+def parse_include_res_darknet53_body_prune_factor_shortcut_list(inputs, prune_factor, shortcut_list, prune_cnt=1):
+    import numpy as np
+    def res_block(inputs, filters, prune_factor, prune_cnt):
+        true_filters_1 = filters
+        true_filters_2 = filters * 2
+        for i in range(prune_cnt):
+            true_filters_1 = np.floor(true_filters_1 * prune_factor)
+            # true_filters_2 = np.floor(true_filters_2 * prune_factor)
+        shortcut = inputs
+        net = conv2d(inputs, true_filters_1, 1)
+        net = conv2d(net, filters * 2, 3)
+
+        net = net + shortcut
+
+        return net
+
+    # first two conv2d layers
+    true_filters_conv0 = 32
+    for i in range(prune_cnt):
+        true_filters_conv0 = np.floor(true_filters_conv0 * prune_factor)
+    net = conv2d(inputs, true_filters_conv0, 3, strides=1)
+    net = conv2d(net, 64 , 3, strides=2)
+
+    # res_block * 1
+    for i in range(shortcut_list[0]):
+        net = res_block(net, 32, prune_factor, prune_cnt=prune_cnt)
+
+    net = conv2d(net, 128 , 3, strides=2)
+
+    # res_block * 2
+    for i in range(shortcut_list[1]):
+        net = res_block(net, 64, prune_factor, prune_cnt=prune_cnt)
+
+    net = conv2d(net, 256, 3, strides=2)
+
+    # res_block * 8
+    for i in range(shortcut_list[2]):
+        net = res_block(net, 128, prune_factor, prune_cnt=prune_cnt)
+    route_1 = net
+    net = conv2d(net, 512, 3, strides=2)
+
+    # res_block * 8
+    for i in range(shortcut_list[3]):
+        net = res_block(net, 256, prune_factor, prune_cnt=prune_cnt)
+    route_2 = net
+    net = conv2d(net, 1024 , 3, strides=2)
+
+    # res_block * 4
+    for i in range(shortcut_list[4]):
+        net = res_block(net, 512, prune_factor, prune_cnt=prune_cnt)
+    route_3 = net
+
+    return route_1, route_2, route_3
 
 def parse_exclude_res_darknet53_body(inputs):
     def res_block(inputs, filters):
@@ -361,6 +414,249 @@ class sliming_yolov3(object):
 
             return feature_map_1, feature_map_2, feature_map_3
 
+    def forward_include_res_with_prune_factor_get_result_no_nms(self, inputs, prune_factor, is_training=False,
+                                                                reuse=False, prune_cnt=1):
+        # the input img_size, form: [height, weight]
+        # it will be used later
+        STRIDES = [8, 16, 32]
+        self.img_size = tf.shape(inputs)[1:3]
+        # set batch norm params
+        batch_norm_params = {
+            'decay': self.batch_norm_decay,
+            'epsilon': 1e-05,
+            'scale': True,
+            'is_training': is_training,
+            'fused': None,  # Use fused batch norm if possible.
+        }
+
+        with slim.arg_scope([slim.conv2d, slim.batch_norm], reuse=reuse):
+            with slim.arg_scope([slim.conv2d],
+                                normalizer_fn=slim.batch_norm,
+                                normalizer_params=batch_norm_params,
+                                biases_initializer=None,
+                                activation_fn=lambda x: tf.nn.leaky_relu(x, alpha=0.1),
+                                weights_regularizer=slim.l2_regularizer(self.weight_decay)):
+                with tf.variable_scope('darknet53_body'):
+                    route_1, route_2, route_3 = parse_include_res_darknet53_body_prune_factor(inputs, prune_factor,
+                                                                                              prune_cnt)
+
+                with tf.variable_scope('yolov3_head'):
+                    inter1, net = yolo_block_pecentage(route_3, 512, prune_factor, prune_cnt=prune_cnt)
+                    conv_lbbox = slim.conv2d(net, 3 * (5 + self.class_num), 1,
+                                             stride=1, normalizer_fn=None,
+                                             activation_fn=None, biases_initializer=tf.zeros_initializer())
+                    conv_lbbox = tf.identity(conv_lbbox, name='conv_lbbox')
+                    # pred_lbbox = self.predict_single_featuremap(conv_lbbox, self.img_size, self.anchors[6:9])
+                    # pred_lbbox = self.predict_single_featuremap(conv_lbbox, self.img_size, self.anchors[6:9])
+                    pred_lbbox = self.decode_validate_doctor_yang(conv_lbbox, self.class_num, stride=STRIDES[2],
+                                                                  shape=608 // 32)
+                    pred_lbbox = tf.identity(pred_lbbox, name='pred_lbbox')
+
+                    inter1 = conv2d(inter1, 256, 1)
+                    inter1 = upsample_layer(inter1, tf.shape(route_2))
+                    concat1 = tf.concat([inter1, route_2], axis=3)
+
+                    inter2, net = yolo_block_pecentage(concat1, 256, prune_factor, prune_cnt=prune_cnt)
+                    conv_mbbox = slim.conv2d(net, 3 * (5 + self.class_num), 1,
+                                             stride=1, normalizer_fn=None,
+                                             activation_fn=None, biases_initializer=tf.zeros_initializer())
+                    conv_mbbox = tf.identity(conv_mbbox, name='conv_mbbox')
+                    # pred_mbbox = self.predict_single_featuremap(conv_mbbox, self.img_size, self.anchors[3:6])
+                    pred_mbbox = self.decode_validate_doctor_yang(conv_mbbox, self.class_num, stride=STRIDES[1],
+                                                                  shape=608 // 16)
+                    pred_mbbox = tf.identity(pred_mbbox, name='pred_mbbox')
+
+                    inter2 = conv2d(inter2, 128, 1)
+                    inter2 = upsample_layer(inter2, tf.shape(route_1))
+                    concat2 = tf.concat([inter2, route_1], axis=3)
+
+                    _, feature_map_3 = yolo_block_pecentage(concat2, 128, prune_factor, prune_cnt=prune_cnt)
+                    conv_sbbox = slim.conv2d(feature_map_3, 3 * (5 + self.class_num), 1,
+                                             stride=1, normalizer_fn=None,
+                                             activation_fn=None, biases_initializer=tf.zeros_initializer())
+                    conv_sbbox = tf.identity(conv_sbbox, name='conv_sbbox')
+                    pred_sbbox = self.decode_validate_doctor_yang(conv_sbbox, self.class_num, stride=STRIDES[0],
+                                                                  shape=608 // 8)
+                    pred_sbbox = tf.identity(pred_sbbox, name='pred_sbbox')
+
+                    pred_sbbox = tf.reshape(pred_sbbox, (-1, self.class_num + 5))
+                    pred_mbbox = tf.reshape(pred_mbbox, (-1, self.class_num + 5))
+                    pred_lbbox = tf.reshape(pred_lbbox, (-1, self.class_num + 5))
+                    pred_bbox = tf.concat([pred_sbbox, pred_mbbox, pred_lbbox], axis=0)
+                    pred_bbox = tf.identity(pred_bbox, name='pred_bbox')
+            # return conv_sbbox, conv_mbbox, conv_lbbox, pred_sbbox, pred_mbbox, pred_lbbox
+            return pred_bbox
+
+    def forward_include_res_with_prune_factor_docktor_yang(self, inputs, prune_factor, is_training=False,
+                                                           reuse=False, prune_cnt=1):
+        # the input img_size, form: [height, weight]
+        # it will be used later
+        self.img_size = tf.shape(inputs)[1:3]
+        # set batch norm params
+        batch_norm_params = {
+            'decay': self.batch_norm_decay,
+            'epsilon': 1e-05,
+            'scale': True,
+            'is_training': is_training,
+            'fused': None,  # Use fused batch norm if possible.
+        }
+
+        with slim.arg_scope([slim.conv2d, slim.batch_norm], reuse=reuse):
+            with slim.arg_scope([slim.conv2d],
+                                normalizer_fn=slim.batch_norm,
+                                normalizer_params=batch_norm_params,
+                                biases_initializer=None,
+                                activation_fn=lambda x: tf.nn.leaky_relu(x, alpha=0.1),
+                                weights_regularizer=slim.l2_regularizer(self.weight_decay)):
+                with tf.variable_scope('darknet53_body'):
+                    route_1, route_2, route_3 = parse_include_res_darknet53_body_prune_factor(inputs, prune_factor,
+                                                                                              prune_cnt)
+
+                with tf.variable_scope('yolov3_head'):
+                    inter1, net = yolo_block_pecentage(route_3, 512, prune_factor, prune_cnt=prune_cnt)
+                    feature_map_1 = slim.conv2d(net, 3 * (5 + self.class_num), 1,
+                                                stride=1, normalizer_fn=None,
+                                                activation_fn=None, biases_initializer=tf.zeros_initializer())
+                    feature_map_1 = tf.identity(feature_map_1, name='feature_map_1')
+
+                    inter1 = conv2d(inter1, 256, 1)
+                    inter1 = upsample_layer(inter1, tf.shape(route_2))
+                    concat1 = tf.concat([inter1, route_2], axis=3)
+
+                    inter2, net = yolo_block_pecentage(concat1, 256, prune_factor, prune_cnt=prune_cnt)
+                    feature_map_2 = slim.conv2d(net, 3 * (5 + self.class_num), 1,
+                                                stride=1, normalizer_fn=None,
+                                                activation_fn=None, biases_initializer=tf.zeros_initializer())
+                    feature_map_2 = tf.identity(feature_map_2, name='feature_map_2')
+
+                    inter2 = conv2d(inter2, 128, 1)
+                    inter2 = upsample_layer(inter2, tf.shape(route_1))
+                    concat2 = tf.concat([inter2, route_1], axis=3)
+
+                    _, feature_map_3 = yolo_block_pecentage(concat2, 128, prune_factor, prune_cnt=prune_cnt)
+                    feature_map_3 = slim.conv2d(feature_map_3, 3 * (5 + self.class_num), 1,
+                                                stride=1, normalizer_fn=None,
+                                                activation_fn=None, biases_initializer=tf.zeros_initializer())
+                    feature_map_3 = tf.identity(feature_map_3, name='feature_map_3')
+
+                    pred_feature_maps = feature_map_1, feature_map_2, feature_map_3
+                    pred_boxes, pred_confs, pred_probs = self.predict_no_stride(pred_feature_maps)
+                    pred_boxes = tf.identity(pred_boxes, name='pred_boxes')
+                    # pred_scores = pred_confs * pred_probs
+                    # pred_scores = tf.identity(pred_scores, name='pred_scores')
+                    pred_confs = tf.identity(pred_confs, name='pred_confs')
+                    pred_probs = tf.identity(pred_probs, name='pred_probs')
+                    # pred_boxes_last = tf.concat([pred_boxes, pred_confs, pred_probs], axis=-1, name='pred_boxes_last')
+                    pred_boxes_last = tf.concat([pred_boxes, pred_confs, pred_probs], axis=-1)
+                    pred_boxes_last = tf.reshape(pred_boxes_last, [-1, 5 + self.class_num], name='pred_boxes_last')
+                    # from utils.nms_utils import gpu_nms
+                    # boxes, scores, labels = gpu_nms(pred_boxes, pred_scores, self.class_num, max_boxes=30,
+                    #                                 score_thresh=0.3,
+                    #                                 nms_thresh=0.5)
+                    # boxes = tf.identity(boxes, name='boxes')
+                    # scores = tf.identity(scores, name='scores')
+                    # labels = tf.identity(labels, name='labels')
+                    # labels_float = tf.cast(labels, dtype=tf.float32)
+                    # pred_boxes_last = tf.concat([pred_boxes, pred_confs, pred_probs], axis=-1, name='pred_boxes_last')
+            return pred_boxes_last
+            # return boxes, scores, labels
+            # return pred_boxes, pred_scores
+            # return pred_boxes, pred_confs, pred_probs
+
+    def decode_validate_doctor_yang(self, conv_output, num_classes, stride, shape):
+        """
+        :param conv_output: yolo的输出，shape为(batch_size, output_size, output_size, gt_per_grid * (5 + num_classes))
+        :param num_classes: 类别的数量
+        :param stride: YOLO的stride
+        :return:
+        pred_bbox: shape为(batch_size, output_size, output_size, gt_per_grid, 5 + num_classes)
+        5 + num_classes指的是预测bbox的(xmin, ymin, xmax, ymax, confidence, probability)
+        其中(xmin, ymin, xmax, ymax)是预测bbox的左上角和右下角坐标，大小是相对于input_size的，
+        confidence是预测bbox属于物体的概率，probability是条件概率分布
+        """
+        conv_output = tf.reshape(conv_output, (1, shape, shape, 3, 5 + num_classes))
+        conv_raw_dx1dy1, conv_raw_dx2dy2, conv_raw_conf, conv_raw_prob = tf.split(conv_output,
+                                                                                  [2, 2, 1, num_classes],
+                                                                                  axis=4)
+
+        # y = tf.tile(tf.range(shape, dtype=tf.int32)[:, tf.newaxis], [1, shape])
+        y = tf.tile(tf.expand_dims(tf.range(shape, dtype=tf.int32), 1), [1, shape])
+        x = tf.tile(tf.expand_dims(tf.range(shape, dtype=tf.int32), 0), [shape, 1])
+        xy_grid = tf.stack([x, y], axis=2)
+        xy_grid = tf.expand_dims(xy_grid, 0)
+        xy_grid = tf.expand_dims(xy_grid, 3)
+        xy_grid = tf.tile(xy_grid, [1, 1, 1, 3, 1])
+        xy_grid = tf.cast(xy_grid, tf.float32)
+        pred_xymin = (xy_grid + 0.5 - tf.exp(conv_raw_dx1dy1)) * stride
+        pred_xymax = (xy_grid + 0.5 + tf.exp(conv_raw_dx2dy2)) * stride
+        pred_corner = tf.concat([pred_xymin, pred_xymax], axis=-1)
+        # (2)对confidence进行decode
+        pred_conf = tf.sigmoid(conv_raw_conf)
+
+        # (3)对probability进行decode
+        pred_prob = tf.sigmoid(conv_raw_prob)
+
+        pred_bbox = tf.concat([pred_corner, pred_conf, pred_prob], axis=-1)
+        return pred_bbox
+
+    def forward_include_res_with_prune_factor_shortcut_list(self, inputs, prune_factor, shortcut_list,
+                                                            is_training=False, reuse=False, prune_cnt=1):
+        # the input img_size, form: [height, weight]
+        # it will be used later
+        self.img_size = tf.shape(inputs)[1:3]
+        self.shortcut_list = shortcut_list
+        # set batch norm params
+        batch_norm_params = {
+            'decay': self.batch_norm_decay,
+            'epsilon': 1e-05,
+            'scale': True,
+            'is_training': is_training,
+            'fused': None,  # Use fused batch norm if possible.
+        }
+
+        with slim.arg_scope([slim.conv2d, slim.batch_norm], reuse=reuse):
+            with slim.arg_scope([slim.conv2d],
+                                normalizer_fn=slim.batch_norm,
+                                normalizer_params=batch_norm_params,
+                                biases_initializer=None,
+                                activation_fn=lambda x: tf.nn.leaky_relu(x, alpha=0.1),
+                                weights_regularizer=slim.l2_regularizer(self.weight_decay)):
+                with tf.variable_scope('darknet53_body'):
+                    route_1, route_2, route_3 = parse_include_res_darknet53_body_prune_factor_shortcut_list(inputs,
+                                                                                                            prune_factor,
+                                                                                                            self.shortcut_list,
+                                                                                                            prune_cnt)
+
+                with tf.variable_scope('yolov3_head'):
+                    inter1, net = yolo_block_pecentage(route_3, 512, prune_factor, prune_cnt=prune_cnt)
+                    feature_map_1 = slim.conv2d(net, 3 * (5 + self.class_num), 1,
+                                                stride=1, normalizer_fn=None,
+                                                activation_fn=None, biases_initializer=tf.zeros_initializer())
+                    feature_map_1 = tf.identity(feature_map_1, name='feature_map_1')
+
+                    inter1 = conv2d(inter1, 256, 1)
+                    inter1 = upsample_layer(inter1, tf.shape(route_2))
+                    concat1 = tf.concat([inter1, route_2], axis=3)
+
+                    inter2, net = yolo_block_pecentage(concat1, 256, prune_factor, prune_cnt=prune_cnt)
+                    feature_map_2 = slim.conv2d(net, 3 * (5 + self.class_num), 1,
+                                                stride=1, normalizer_fn=None,
+                                                activation_fn=None, biases_initializer=tf.zeros_initializer())
+                    feature_map_2 = tf.identity(feature_map_2, name='feature_map_2')
+
+                    inter2 = conv2d(inter2, 128, 1)
+                    inter2 = upsample_layer(inter2, tf.shape(route_1))
+                    concat2 = tf.concat([inter2, route_1], axis=3)
+
+                    _, feature_map_3 = yolo_block_pecentage(concat2, 128, prune_factor, prune_cnt=prune_cnt)
+                    feature_map_3 = slim.conv2d(feature_map_3, 3 * (5 + self.class_num), 1,
+                                                stride=1, normalizer_fn=None,
+                                                activation_fn=None, biases_initializer=tf.zeros_initializer())
+                    feature_map_3 = tf.identity(feature_map_3, name='feature_map_3')
+
+            return feature_map_1, feature_map_2, feature_map_3
+
+
     def reorg_layer(self, feature_map, anchors):
         '''
         feature_map: a feature_map from [feature_map_1, feature_map_2, feature_map_3] returned
@@ -417,6 +713,122 @@ class sliming_yolov3(object):
         # conf_logits: [N, 13, 13, 3, 1]
         # prob_logits: [N, 13, 13, 3, class_num]
         return x_y_offset, boxes, conf_logits, prob_logits
+
+    def reorg_layer_no_scale(self, feature_map, anchors):
+        '''
+        feature_map: a feature_map from [feature_map_1, feature_map_2, feature_map_3] returned
+            from `forward` function
+        anchors: shape: [3, 2]
+        '''
+        # NOTE: size in [h, w] format! don't get messed up!
+        grid_size = tf.shape(feature_map)[1:3]  # [13, 13]
+        # the downscale ratio in height and weight
+        ratio = tf.cast(self.img_size / grid_size, tf.float32)
+        # rescale the anchors to the feature_map
+        # NOTE: the anchor is in [w, h] format!
+        rescaled_anchors = [(anchor[0] / ratio[1], anchor[1] / ratio[0]) for anchor in anchors]
+
+        feature_map = tf.reshape(feature_map, [-1, grid_size[0], grid_size[1], 3, 5 + self.class_num])
+
+        # split the feature_map along the last dimension
+        # shape info: take 416x416 input image and the 13*13 feature_map for example:
+        # box_centers: [N, 13, 13, 3, 2] last_dimension: [center_x, center_y]
+        # box_sizes: [N, 13, 13, 3, 2] last_dimension: [width, height]
+        # conf_logits: [N, 13, 13, 3, 1]
+        # prob_logits: [N, 13, 13, 3, class_num]
+        box_centers, box_sizes, conf_logits, prob_logits = tf.split(feature_map, [2, 2, 1, self.class_num], axis=-1)
+        box_centers = tf.nn.sigmoid(box_centers)
+
+        # use some broadcast tricks to get the mesh coordinates
+        grid_x = tf.range(grid_size[1], dtype=tf.int32)
+        grid_y = tf.range(grid_size[0], dtype=tf.int32)
+        grid_x, grid_y = tf.meshgrid(grid_x, grid_y)
+        x_offset = tf.reshape(grid_x, (-1, 1))
+        y_offset = tf.reshape(grid_y, (-1, 1))
+        x_y_offset = tf.concat([x_offset, y_offset], axis=-1)
+        # shape: [13, 13, 1, 2]
+        x_y_offset = tf.cast(tf.reshape(x_y_offset, [grid_size[0], grid_size[1], 1, 2]), tf.float32)
+
+        # get the absolute box coordinates on the feature_map
+        box_centers = box_centers + x_y_offset
+        # rescale to the original image scale
+        # box_centers = box_centers * ratio[::-1]
+        box_centers = box_centers * ratio
+
+        # avoid getting possible nan value with tf.clip_by_value
+        box_sizes = tf.exp(box_sizes) * rescaled_anchors
+        # box_sizes = tf.clip_by_value(tf.exp(box_sizes), 1e-9, 100) * rescaled_anchors
+        # rescale to the original image scale
+        # box_sizes = box_sizes * ratio[::-1]
+        box_sizes = box_sizes * ratio
+
+        # shape: [N, 13, 13, 3, 4]
+        # last dimension: (center_x, center_y, w, h)
+        boxes = tf.concat([box_centers, box_sizes], axis=-1)
+
+        # shape:
+        # x_y_offset: [13, 13, 1, 2]
+        # boxes: [N, 13, 13, 3, 4], rescaled to the original image scale
+        # conf_logits: [N, 13, 13, 3, 1]
+        # prob_logits: [N, 13, 13, 3, class_num]
+        return x_y_offset, boxes, conf_logits, prob_logits
+
+    def predict_no_stride(self, feature_maps):
+        '''
+        Receive the returned feature_maps from `forward` function,
+        the produce the output predictions at the test stage.
+        '''
+        feature_map_1, feature_map_2, feature_map_3 = feature_maps
+
+        feature_map_anchors = [(feature_map_1, self.anchors[6:9]),
+                               (feature_map_2, self.anchors[3:6]),
+                               (feature_map_3, self.anchors[0:3])]
+        reorg_results = [self.reorg_layer_no_scale(feature_map, anchors) for (feature_map, anchors) in feature_map_anchors]
+
+        def _reshape(result):
+            x_y_offset, boxes, conf_logits, prob_logits = result
+            grid_size = tf.shape(x_y_offset)[:2]
+            boxes = tf.reshape(boxes, [-1, grid_size[0] * grid_size[1] * 3, 4])
+            conf_logits = tf.reshape(conf_logits, [-1, grid_size[0] * grid_size[1] * 3, 1])
+            prob_logits = tf.reshape(prob_logits, [-1, grid_size[0] * grid_size[1] * 3, self.class_num])
+            # shape: (take 416*416 input image and feature_map_1 for example)
+            # boxes: [N, 13*13*3, 4]
+            # conf_logits: [N, 13*13*3, 1]
+            # prob_logits: [N, 13*13*3, class_num]
+            return boxes, conf_logits, prob_logits
+
+        boxes_list, confs_list, probs_list = [], [], []
+        for result in reorg_results:
+            boxes, conf_logits, prob_logits = _reshape(result)
+            confs = tf.sigmoid(conf_logits)
+            probs = tf.sigmoid(prob_logits)
+            boxes_list.append(boxes)
+            confs_list.append(confs)
+            probs_list.append(probs)
+
+        # collect results on three scales
+        # take 416*416 input image for example:
+        # shape: [N, (13*13+26*26+52*52)*3, 4]
+        boxes = tf.concat(boxes_list, axis=1)
+        # shape: [N, (13*13+26*26+52*52)*3, 1]
+        confs = tf.concat(confs_list, axis=1)
+        # shape: [N, (13*13+26*26+52*52)*3, class_num]
+        probs = tf.concat(probs_list, axis=1)
+
+        center_x, center_y, width, height = tf.split(boxes, [1, 1, 1, 1], axis=-1)
+        # center_x = boxes[:,:,0:1]
+        # center_y = boxes[:,:,1:2]
+        # width = boxes[:,:,2:3]
+        # height = boxes[:,:,3:4]
+
+        x_min = center_x - width / 2
+        y_min = center_y - height / 2
+        x_max = center_x + width / 2
+        y_max = center_y + height / 2
+
+        boxes = tf.concat([x_min, y_min, x_max, y_max], axis=-1)
+
+        return boxes, confs, probs
 
     def predict(self, feature_maps):
         '''
@@ -521,6 +933,61 @@ class sliming_yolov3(object):
         boxes = tf.concat([x_min, y_min, x_max, y_max], axis=-1)
 
         return boxes, confs, probs
+
+    def predict_single_featuremap(self, feature_map, img_size, feature_map_anchor):
+        '''
+        Receive the returned feature_maps from `forward` function,
+        the produce the output predictions at the test stage.
+        '''
+        # feature_map_1, feature_map_2, feature_map_3 = feature_map
+        self.img_size = img_size
+        # feature_map_anchors = [(feature_map_1, self.anchors[6:9]),
+        #                        (feature_map_2, self.anchors[3:6]),
+        #                        (feature_map_3, self.anchors[0:3])]
+        reorg_results = [self.reorg_layer_no_scale(feature_map, feature_map_anchor)]
+
+        def _reshape(result):
+            x_y_offset, boxes, conf_logits, prob_logits = result
+            grid_size = tf.shape(x_y_offset)[:2]
+            boxes = tf.reshape(boxes, [-1, grid_size[0] * grid_size[1] * 3, 4])
+            conf_logits = tf.reshape(conf_logits, [-1, grid_size[0] * grid_size[1] * 3, 1])
+            prob_logits = tf.reshape(prob_logits, [-1, grid_size[0] * grid_size[1] * 3, self.class_num])
+            # shape: (take 416*416 input image and feature_map_1 for example)
+            # boxes: [N, 13*13*3, 4]
+            # conf_logits: [N, 13*13*3, 1]
+            # prob_logits: [N, 13*13*3, class_num]
+            return boxes, conf_logits, prob_logits
+
+        boxes_list, confs_list, probs_list = [], [], []
+        for result in reorg_results:
+            boxes, conf_logits, prob_logits = _reshape(result)
+            confs = tf.sigmoid(conf_logits)
+            probs = tf.sigmoid(prob_logits)
+            boxes_list.append(boxes)
+            confs_list.append(confs)
+            probs_list.append(probs)
+
+        # collect results on three scales
+        # take 416*416 input image for example:
+        # shape: [N, (13*13+26*26+52*52)*3, 4]
+        boxes = tf.concat(boxes_list, axis=1)
+        # shape: [N, (13*13+26*26+52*52)*3, 1]
+        confs = tf.concat(confs_list, axis=1)
+        # shape: [N, (13*13+26*26+52*52)*3, class_num]
+        probs = tf.concat(probs_list, axis=1)
+
+        center_x, center_y, width, height = tf.split(boxes, [1, 1, 1, 1], axis=-1)
+        x_min = center_x - width / 2
+        y_min = center_y - height / 2
+        x_max = center_x + width / 2
+        y_max = center_y + height / 2
+
+        boxes = tf.concat([x_min, y_min, x_max, y_max], axis=-1)
+        pred_bbox = tf.concat([boxes, confs, probs], axis=-1)
+
+        return pred_bbox
+        # return boxes, confs, probs
+
 
     def loss_layer(self, feature_map_i, y_true, anchors):
         '''
@@ -653,6 +1120,26 @@ class sliming_yolov3(object):
         total_loss = loss_xy + loss_wh + loss_conf + loss_class
         return [total_loss, loss_xy, loss_wh, loss_conf, loss_class]
 
+    def compute_loss_knowledge_ditstill(self, teacher_output, y_pred, y_true, batchsize, num_classes):
+        '''
+        param:
+            y_pred: returned feature_map list by `forward` function: [feature_map_1, feature_map_2, feature_map_3]
+            y_true: input y_true by the tf.data pipeline
+        '''
+        loss_xy, loss_wh, loss_conf, loss_class = 0., 0., 0., 0.
+        anchor_group = [self.anchors[6:9], self.anchors[3:6], self.anchors[0:3]]
+
+        # calc loss in 3 scales
+        for i in range(len(y_pred)):
+            result = self.loss_layer(y_pred[i], y_true[i], anchor_group[i])
+            loss_xy += result[0]
+            loss_wh += result[1]
+            loss_conf += result[2]
+            loss_class += result[3]
+        kd_loss = self.distillation_loss1(teacher_output, y_pred, num_classes=num_classes,  batch_size=batchsize)
+        total_loss = loss_xy + loss_wh + loss_conf + loss_class + kd_loss
+        return [total_loss, loss_xy, loss_wh, loss_conf, loss_class, kd_loss]
+
     def broadcast_iou(self, true_box_xy, true_box_wh, pred_box_xy, pred_box_wh):
         '''
         maintain an efficient way to calculate the ios matrix between ground truth true boxes and the predicted boxes
@@ -689,22 +1176,20 @@ class sliming_yolov3(object):
 
         return iou
 
-    # def distillation_loss1(self, output_s, output_t, num_classes, batch_size):
-    #     batch_size = tf.cast(batch_size, tf.float32)
-    #     T = 3.0
-    #     Lambda_ST = 0.001
-    #     criterion_st = torch.nn.KLDivLoss(reduction='sum')
-    #     output_s = tf.concat([i.view(-1, num_classes + 5) for i in output_s])
-    #     output_t = torch.cat([i.view(-1, num_classes + 5) for i in output_t])
-    #     loss_st  = criterion_st(nn.functional.log_softmax(output_s/T, dim=1), nn.functional.softmax(output_t/T,dim=1))* (T*T) / batch_size
-    #     return loss_st * Lambda_ST
-
     def distillation_loss1(self, output_s, output_t, num_classes, batch_size):
         batch_size = tf.cast(batch_size, tf.float32)
         T = 3.0
         Lambda_ST = 0.001
         # criterion_st = torch.nn.KLDivLoss(reduction='sum')
-        output_s = tf.concat([i.view(-1, num_classes + 5) for i in output_s])
-        output_t = tf.concat([i.view(-1, num_classes + 5) for i in output_t])
-        loss_st  = (tf.nn.log_softmax(output_s/T, dim=1), tf.nn.softmax(output_t/T,dim=1))* (T*T) / batch_size
-        return loss_st * Lambda_ST
+        output_s = tf.concat([tf.reshape(i, [-1, num_classes + 5]) for i in output_s], axis=-1)
+        output_t = tf.concat([tf.reshape(i, [-1, num_classes + 5]) for i in output_t], axis=-1)
+        T_prob = tf.nn.softmax(output_t/T, dim=1)
+        S_prob = tf.nn.softmax(output_s, dim=1)
+
+        loss_kn = tf.keras.losses.kld(T_prob,S_prob)/batch_size
+
+        # loss_tf_kn = tf.reduce_sum(T_prob*tf.log(T_prob / S_prob), axis=-1)
+        loss_torch_kn = tf.keras.losses.kld(T_prob,S_prob)/batch_size *(T*T) /batch_size *Lambda_ST
+        # case_3 = tf.reduce_sum(p * tf.log(p) - p * tf.log(q)
+
+        return loss_kn
