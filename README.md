@@ -1,3 +1,12 @@
+20200311 updates:
+    add mnn inference code, when i use mmn converted tools, some ops donn't support , so i need change some code for success converted(pb->mnn). finally, i test tf inference results and mnn
+     inference results, there is a difference of four digits after the decimal point.
+     --reference project
+                1. https://github.com/alibaba/MNN
+                2. https://github.com/wlguan/MNN-yolov3   (android code)
+
+    add quant code from google paper, but this code just fusion bn and conv layer, and the code doesn't train, i have no time to fix it , and this fusion code was plagiarized, ha ha ha, if i have another time , i wiil fixed it
+
 20200214 updates:
     add structure prune--layer prune algorithm, compared with the channel pruning algorithm, the efficiency is not high. ---Reference Paper DeepCompression SongHan
 

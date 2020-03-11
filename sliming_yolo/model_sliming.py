@@ -542,26 +542,11 @@ class sliming_yolov3(object):
                     pred_feature_maps = feature_map_1, feature_map_2, feature_map_3
                     pred_boxes, pred_confs, pred_probs = self.predict_no_stride(pred_feature_maps)
                     pred_boxes = tf.identity(pred_boxes, name='pred_boxes')
-                    # pred_scores = pred_confs * pred_probs
-                    # pred_scores = tf.identity(pred_scores, name='pred_scores')
                     pred_confs = tf.identity(pred_confs, name='pred_confs')
                     pred_probs = tf.identity(pred_probs, name='pred_probs')
-                    # pred_boxes_last = tf.concat([pred_boxes, pred_confs, pred_probs], axis=-1, name='pred_boxes_last')
                     pred_boxes_last = tf.concat([pred_boxes, pred_confs, pred_probs], axis=-1)
                     pred_boxes_last = tf.reshape(pred_boxes_last, [-1, 5 + self.class_num], name='pred_boxes_last')
-                    # from utils.nms_utils import gpu_nms
-                    # boxes, scores, labels = gpu_nms(pred_boxes, pred_scores, self.class_num, max_boxes=30,
-                    #                                 score_thresh=0.3,
-                    #                                 nms_thresh=0.5)
-                    # boxes = tf.identity(boxes, name='boxes')
-                    # scores = tf.identity(scores, name='scores')
-                    # labels = tf.identity(labels, name='labels')
-                    # labels_float = tf.cast(labels, dtype=tf.float32)
-                    # pred_boxes_last = tf.concat([pred_boxes, pred_confs, pred_probs], axis=-1, name='pred_boxes_last')
             return pred_boxes_last
-            # return boxes, scores, labels
-            # return pred_boxes, pred_scores
-            # return pred_boxes, pred_confs, pred_probs
 
     def decode_validate_doctor_yang(self, conv_output, num_classes, stride, shape):
         """
